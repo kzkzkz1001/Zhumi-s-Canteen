@@ -4,3 +4,5 @@
 *.class
 *Test.java
 **/test/
+**/src/main/resources/application-dev.yml
+**/src/main/resources/application-local.yml
