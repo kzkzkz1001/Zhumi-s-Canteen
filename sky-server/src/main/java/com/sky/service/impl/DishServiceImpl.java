@@ -25,7 +25,7 @@ import java.util.List;
 
 @Slf4j
 @Service
-public class DishServiceImpl extends DishService{
+public class DishServiceImpl implements DishService{
     @Autowired
     private DishMapper dishMapper;
     @Autowired
@@ -55,6 +55,7 @@ public class DishServiceImpl extends DishService{
         }
     }
 
+
     public PageResult pageQuery(DishPageQueryDTO dishPageQueryDTO){
         PageHelper.startPage(dishPageQueryDTO.getPage(),dishPageQueryDTO.getPageSize());
         Page<DishVO>  page = dishMapper.pageQuery(dishPageQueryDTO);
@@ -66,7 +67,7 @@ public class DishServiceImpl extends DishService{
      */
     @Transactional
     public void deleteBatch(List<Long> ids) {
-        //当前是否能够删除，是否是起手中
+        //当前是否能够删除，是否是启售中
         for(Long id : ids){
             Dish dish  = dishMapper.getById(id);
             if(dish.getStatus() == StatusConstant.ENABLE){
@@ -80,11 +81,48 @@ public class DishServiceImpl extends DishService{
             throw new DeletionNotAllowedException(MessageConstant.CATEGORY_BE_RELATED_BY_SETMEAL);
         }
         //删除菜品表中的菜品数据
-        for (Long id : ids) {
-            dishMapper.delete(id);
-            //删除菜品相关的口味数据
-            dishFlavorMapper.deleteByDishId(id);
+        //for (Long id : ids) {
+        //    dishMapper.delete(id);
+        //    //删除菜品相关的口味数据
+        //    dishFlavorMapper.deleteByDishId(id);
+        //}
+
+        dishMapper.deleteByIds(ids);
+        dishFlavorMapper.deleteByDishIds(ids);
+
+    }
+    public DishVO getByIdWithFlavor(Long id){
+        //根据id查询菜品数据
+        Dish dish = dishMapper.getById(id);
+        //根据菜品id查询口味数据
+        List<DishFlavor> dishFlavors = dishFlavorMapper.getByDishId(id);
+        //将查询到的数据封装到VO对象
+        DishVO dishVO = new DishVO();
+        BeanUtils.copyProperties(dish,dishVO);
+        dishVO.setFlavors(dishFlavors);
+
+        return dishVO;
+    }
+    /**
+     * 根据id修改菜品基本信息和口味信息
+     * @param dishDTO
+     */
+    @Override
+    public void updateWithFlavor(DishDTO dishDTO) {
+        //修改菜品表基本信息
+        Dish dish = new Dish();
+        BeanUtils.copyProperties(dishDTO,dish);
+        dishMapper.update(dish);
+        //删除原油口味数据
+        dishFlavorMapper.deleteByDishId(dishDTO.getId());
+        //重新插入口味数据
+        List<DishFlavor> flavors = dishDTO.getFlavors();
+        if(flavors != null && flavors.size() > 0){
+            flavors.forEach(dishFlavor -> {
+                dishFlavor.setDishId(dishDTO.getId());
+            });
         }
+        dishFlavorMapper.insertBatch(flavors);
 
     }
 }
