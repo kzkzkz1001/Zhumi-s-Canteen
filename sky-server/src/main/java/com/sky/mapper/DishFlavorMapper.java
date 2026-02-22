@@ -19,7 +19,7 @@ public interface DishFlavorMapper {
      * 根据菜品id 删除 风味
      * @param id
      */
-    @Delete("delete form dish_flavor where dish_id = #{dishId}")
+    @Delete("delete from dish_flavor where dish_id = #{dishId}")
     void deleteByDishId(Long id);
 
     /**
