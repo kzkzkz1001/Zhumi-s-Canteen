@@ -1,5 +1,6 @@
 package com.sky.service.impl;
 
+import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
@@ -19,6 +20,7 @@ import com.sky.utils.WeChatPayUtil;
 import com.sky.vo.OrderPaymentVO;
 import com.sky.vo.OrderSubmitVO;
 import com.sky.vo.OrderVO;
+import com.sky.webSocket.WebSocketServer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -45,6 +49,8 @@ public class OrderServiceImpl implements OrderService {
     private WeChatPayUtil weChatPayUtil;
     @Autowired
     private UserMapper userMapper;
+    @Autowired
+    private WebSocketServer webSocketServer;
     /**
      * 提交订单
      * @param ordersSubmitDTO
@@ -169,6 +175,15 @@ public class OrderServiceImpl implements OrderService {
                 .build();
 
         orderMapper.update(orders);
+
+        //通过websocket 向客户端浏览器推送消息
+        Map map = new HashMap();
+        map.put("type",1);
+        map.put("orderId",ordersDB.getId());
+        map.put("content","订单号:"+ outTradeNo);
+
+        String json = JSON.toJSONString(map);
+        webSocketServer.sendToAllClient(json);
     }
 
     /**
@@ -201,5 +216,83 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         return new PageResult(page.getTotal(), list);
+    }
+
+    @Override
+    public PageResult conditionSearch(OrdersPageQueryDTO ordersPageQueryDTO) {
+        PageHelper.startPage(ordersPageQueryDTO.getPage(), ordersPageQueryDTO.getPageSize());
+        Page<Orders> page = orderMapper.conditionSearch(ordersPageQueryDTO);
+        return new PageResult(page.getTotal(), page.getResult());
+    }
+    /**
+     * 查询订单详情
+     *
+     * @param id
+     * @return
+     */
+    public OrderVO details(Long id) {
+        // 根据id查询订单
+        Orders orders = orderMapper.getById(id);
+
+        // 查询该订单对应的菜品/套餐明细
+        List<OrderDetail> orderDetailList = orderDetailMapper.getByOrderId(orders.getId());
+
+        // 将该订单及其详情封装到OrderVO并返回
+        OrderVO orderVO = new OrderVO();
+        BeanUtils.copyProperties(orders, orderVO);
+        orderVO.setOrderDetailList(orderDetailList);
+
+        return orderVO;
+    }
+    /**
+     * 客户催单
+     * @param id
+     */
+    public void reminder(Long id) {
+        Orders ordersDB = orderMapper.getById(id);
+
+        if(ordersDB == null){
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
+
+        Map map = new HashMap();
+        map.put("type",2);
+        map.put("orderId",id);
+        map.put("content","订单号：" + ordersDB.getNumber());
+        String json = JSON.toJSONString(map);
+        webSocketServer.sendToAllClient(json);
+    }
+
+    /**
+     * 用户取消订单
+     * @param id
+     * @throws Exception
+     */
+    public void userCancelById(Long id) throws Exception {
+        Orders ordersDB = orderMapper.getById(id);
+        if(ordersDB == null){
+            throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
+        }
+        if(ordersDB.getStatus() > 2){
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
+        Orders orders = new Orders();
+        orders.setId(ordersDB.getId());
+
+        if(ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)){
+            weChatPayUtil.refund(
+                    ordersDB.getNumber(), //商户订单号
+                    ordersDB.getNumber(), //商户退款单号
+                    new BigDecimal(0.01),//退款金额，单位 元
+                    new BigDecimal(0.01));
+
+                    //支付状态修改为 退款
+                    orders.setPayStatus(Orders.REFUND);
+        }
+        // 更新订单状态、取消原因、取消时间
+        orders.setStatus(Orders.CANCELLED);
+        orders.setCancelReason("用户取消");
+        orders.setCancelTime(LocalDateTime.now());
+        orderMapper.update(orders);
     }
 }
